@@ -1,0 +1,169 @@
+#Instalacion de Wazuh mediante ElastickStack
+#El siguiente script funciona a detalle no es necesario realizar ningún cambio, las #contraseñas se generan automaticamente y las muestra al final de la instalación.
+#Nota estar pendiente de las actualizaciones
+#!/bin/bash
+# Script totalmente automatizado de instalación Wazuh + Elastic Stack en Ubuntu 20.04
+# Autor: Manual de instalación Wazuh
+# NOTA: Ejecutar como usuario con privilegios sudo
+
+set -e  # Salir si algún comando falla
+echo "Inicio del script de instalación"
+
+# 1.- Actualización de paquetes
+
+echo "Actualizando lista de paquetes..."
+sudo apt update
+
+# 2.- Instalación de utilidades necesarias
+
+echo "Instalando herramientas básicas..."
+sudo apt-get install -y apt-transport-https zip unzip lsb-release curl gnupg
+
+# 3.- Instalación de Elasticsearch
+
+echo "Instalando Elasticsearch..."
+
+# Clave GPG
+curl -s https://artifacts.elastic.co/GPG-KEY-elasticsearch \
+| gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/elasticsearch.gpg --import
+
+sudo chmod 644 /usr/share/keyrings/elasticsearch.gpg
+
+# Repositorio
+
+echo "deb [signed-by=/usr/share/keyrings/elasticsearch.gpg] https://artifacts.elastic.co/packages/7.x/apt stable main" \
+| sudo tee /etc/apt/sources.list.d/elastic-7.x.list
+
+sudo apt-get update
+
+sudo apt-get install -y elasticsearch=7.17.13
+
+# Configuración prediseñada
+
+sudo curl -so /etc/elasticsearch/elasticsearch.yml https://packages.wazuh.com/4.5/tpl/elastic-basic/elasticsearch_all_in_one.yml
+
+# 4.- Creación de certificados TLS
+
+echo "Creando certificados TLS para Elasticsearch..."
+sudo curl -so /usr/share/elasticsearch/instances.yml https://packages.wazuh.com/4.5/tpl/elastic-basic/instances_aio.yml
+
+# Crear directorio temporal
+mkdir -p ~/certs_temp
+/usr/share/elasticsearch/bin/elasticsearch-certutil cert ca --pem --in /usr/share/elasticsearch/instances.yml --keep-ca-key --out ~/certs_temp/certs.zip
+unzip ~/certs_temp/certs.zip -d ~/certs_temp
+
+# Crear directorios definitivos y mover certificados
+sudo mkdir -p /etc/elasticsearch/certs/ca
+sudo cp -R ~/certs_temp/ca/ ~/certs_temp/elasticsearch/* /etc/elasticsearch/certs/
+sudo chown -R elasticsearch: /etc/elasticsearch/certs
+sudo chmod -R 500 /etc/elasticsearch/certs
+sudo chmod 400 /etc/elasticsearch/certs/ca/ca.* /etc/elasticsearch/certs/elasticsearch.*
+
+# Limpiar temporales
+rm -rf ~/certs_temp
+
+# 5.- Iniciar Elasticsearch
+
+sudo systemctl daemon-reload
+sudo systemctl enable elasticsearch
+sudo systemctl start elasticsearch
+
+# 6.- Generar contraseñas de Elastic
+
+echo "Generando contraseñas de Elastic Stack..."
+ELASTIC_PASSWORD=$(/usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto --batch | grep "PASSWORD elastic" | awk '{print $4}')
+echo "Contraseña de usuario 'elastic': $ELASTIC_PASSWORD"
+
+# 7.- Instalación del servidor Wazuh
+
+echo "Instalando Wazuh Manager..."
+
+# Clave GPG
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH \
+| gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
+sudo chmod 644 /usr/share/keyrings/wazuh.gpg
+
+# Repositorio
+echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" \
+| sudo tee /etc/apt/sources.list.d/wazuh.list
+
+sudo apt-get update
+sudo apt-get install -y wazuh-manager=4.5.4-1
+
+# Iniciar Wazuh
+sudo systemctl daemon-reload
+sudo systemctl enable wazuh-manager
+sudo systemctl start wazuh-manager
+sudo systemctl status wazuh-manager --no-pager
+
+# 8.- Instalación de Filebeat
+
+echo "Instalando Filebeat..."
+sudo apt-get install -y filebeat=7.17.13
+
+# Configuración prediseñada
+sudo curl -so /etc/filebeat/filebeat.yml https://packages.wazuh.com/4.5/tpl/elastic-basic/filebeat_all_in_one.yml
+sudo sed -i "s|<elasticsearch_password>|$ELASTIC_PASSWORD|g" /etc/filebeat/filebeat.yml
+
+# Plantilla de alertas
+sudo curl -so /etc/filebeat/wazuh-template.json https://raw.githubusercontent.com/wazuh/wazuh/v4.5.4/extensions/elasticsearch/7.x/wazuh-template.json
+sudo chmod go+r /etc/filebeat/wazuh-template.json
+
+# Módulo Wazuh
+sudo curl -s https://packages.wazuh.com/4.x/filebeat/wazuh-filebeat-0.2.tar.gz | sudo tar -xvz -C /usr/share/filebeat/module
+
+# Certificados Filebeat
+sudo mkdir -p /etc/filebeat/certs
+sudo cp -r /etc/elasticsearch/certs/ca/ /etc/filebeat/certs/
+sudo cp /etc/elasticsearch/certs/elasticsearch.crt /etc/filebeat/certs/filebeat.crt
+sudo cp /etc/elasticsearch/certs/elasticsearch.key /etc/filebeat/certs/filebeat.key
+
+# Iniciar Filebeat
+sudo systemctl daemon-reload
+sudo systemctl enable filebeat
+sudo systemctl start filebeat
+filebeat test output
+
+# 9.- Instalación y configuración de Kibana
+
+echo "Instalando Kibana..."
+sudo apt-get install -y kibana=7.17.13
+
+# Certificados Kibana
+sudo mkdir -p /etc/kibana/certs/ca
+sudo cp -R /etc/elasticsearch/certs/ca/ /etc/kibana/certs/
+sudo cp /etc/elasticsearch/certs/elasticsearch.key /etc/kibana/certs/kibana.key
+sudo cp /etc/elasticsearch/certs/elasticsearch.crt /etc/kibana/certs/kibana.crt
+sudo chown -R kibana:kibana /etc/kibana/
+sudo chmod -R 500 /etc/kibana/certs
+sudo chmod 440 /etc/kibana/certs/ca/ca.* /etc/kibana/certs/kibana.*
+
+# Configuración prediseñada Kibana
+sudo curl -so /etc/kibana/kibana.yml https://packages.wazuh.com/4.5/tpl/elastic-basic/kibana_all_in_one.yml
+sudo sed -i "s|<elasticsearch_password>|$ELASTIC_PASSWORD|g" /etc/kibana/kibana.yml
+
+# Crear directorio de datos de Kibana
+sudo mkdir -p /usr/share/kibana/data
+sudo chown -R kibana:kibana /usr/share/kibana
+
+# Plugin Wazuh en Kibana
+cd /usr/share/kibana
+sudo -u kibana /usr/share/kibana/bin/kibana-plugin install https://packages.wazuh.com/4.x/ui/kibana/wazuh_kibana-4.5.4_7.17.13-1.zip
+
+# Permiso para puerto 443
+sudo setcap 'cap_net_bind_service=+ep' /usr/share/kibana/node/bin/node
+
+# Iniciar Kibana
+sudo systemctl daemon-reload
+sudo systemctl enable kibana
+sudo systemctl start kibana
+
+# 10.- Finalización
+
+echo "===================================="
+echo "INSTALACIÓN COMPLETA"
+echo "Acceda a Kibana vía navegador usando:"
+echo "https://<IP-del-servidor>"
+echo "Usuario: elastic"
+echo "Contraseña: $ELASTIC_PASSWORD"
+echo "===================================="
