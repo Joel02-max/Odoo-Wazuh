@@ -1,0 +1,62 @@
+#!/bin/bash
+# Script de instalación y configuración de Wazuh Agent 4.5.4
+# Autor: Yeltsin
+# Fecha: 2025-08-20
+
+set -e
+echo "   INSTALACIÓN WAZUH-AGENT"
+
+
+# 1. Agregar el repositorio de Wazuh
+echo "Agregando repositorio de Wazuh..."
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --dearmor -o /usr/share/keyrings/wazuh-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/wazuh-archive-keyring.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | sudo tee /etc/apt/sources.list.d/wazuh.list
+
+# 2. Actualizar la lista de paquetes
+echo "Actualizando lista de paquetes..."
+sudo apt-get update
+
+# 3. Instalar Wazuh-Agent
+echo "Instalando Wazuh Agent versión 4.5.4..."
+sudo apt-get install wazuh-agent=4.5.4-1 -y
+
+# 4. Configuración mínima de logs de Odoo
+echo "Configurando logs de Odoo..."
+sudo mkdir -p /var/log/odoo
+sudo touch /var/log/odoo/odoo.log
+sudo chown wazuh:wazuh /var/log/odoo/odoo.log
+sudo chmod 640 /var/log/odoo/odoo.log
+
+# 5. Configuración de ossec.conf
+echo " Configurando /var/ossec/etc/ossec.conf..."
+OSSEC_CONF="/var/ossec/etc/ossec.conf"
+sudo cp $OSSEC_CONF $OSSEC_CONF.bak
+
+sudo tee $OSSEC_CONF > /dev/null <<EOF
+<ossec_config>
+  <client>
+    <server>
+      <address>192.168.100.103</address>
+      <port>1514</port>
+      <protocol>tcp</protocol>
+    </server>
+  </client>
+
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/var/log/odoo/odoo.log</location>
+  </localfile>
+</ossec_config>
+EOF
+
+# 6. Habilitar y arrancar el agente
+echo "Habilitando y arrancando Wazuh Agent..."
+sudo systemctl enable wazuh-agent
+sudo systemctl start wazuh-agent
+
+# 7. Verificar estado
+echo "Estado del agente:"
+sudo systemctl status wazuh-agent --no-pager
+
+echo "   Instalación y configuración completadas"
+echo "###########################################"
