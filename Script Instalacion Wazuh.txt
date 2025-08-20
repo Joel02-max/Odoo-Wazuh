@@ -3,7 +3,7 @@
 #Nota estar pendiente de las actualizaciones
 #!/bin/bash
 # Script totalmente automatizado de instalación Wazuh + Elastic Stack en Ubuntu 20.04
-# Autor: Manual de instalación Wazuh
+# Autor: Yeltsin
 # NOTA: Ejecutar como usuario con privilegios sudo
 
 set -e  # Salir si algún comando falla
