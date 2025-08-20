@@ -1,6 +1,6 @@
 #!/bin/bash
 # Script de instalación y configuración de Wazuh Agent 4.5.4
-# Autor: Yeltsin
+# Autor: Angelo
 # Fecha: 2025-08-20
 
 set -e
@@ -60,3 +60,4 @@ sudo systemctl status wazuh-agent --no-pager
 
 echo "   Instalación y configuración completadas"
 echo "###########################################"
+
