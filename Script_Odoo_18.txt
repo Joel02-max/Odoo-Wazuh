@@ -1,134 +1,110 @@
 #!/bin/bash
-# Script de instalación automatizada de Odoo 18 + Wazuh Agent v4.5.4
-# Autor: Angelo
-# Uso: sudo bash install_odoo_wazuh.sh
+# Script para instalar Odoo 18 en Ubuntu
 
-# Variables
+# ===============================
+# Variables de configuración
+# ===============================
 ODOO_USER="joel"
-ODOO_HOME="/home/$ODOO_USER/odoo/18"
-VENV_NAME="virt_odoo18"
-DB_USER="odoo18_mivil"
-DB_PASS="12345"
-ADMIN_PASS="12345"
+ODOO_HOME="/home/$ODOO_USER/18"
+ODOO_VENV="$ODOO_HOME/virt_odoo18"
+ODOO_CONF="$ODOO_HOME/odoo18.conf"
+ODOO_ADDONS="$ODOO_HOME/odoo/addons"
+ODOO_DB_USER="odoo18_mivil"
+ODOO_DB_PASS="12345"
+ODOO_ADMIN_PASS="12345"
 ODOO_PORT="8069"
-WAZUH_SERVER="192.168.100.103"
-WAZUH_VERSION="4.5.4-1"
 
-# Actualización del sistema
-echo "Actualizando sistema..."
+# ===============================
+# 1. Actualizar sistema
+# ===============================
 sudo apt update && sudo apt upgrade -y
 
-# Instalación de dependencias
-echo "Instalando dependencias..."
-sudo apt install -y python3-pip build-essential wget git libxslt-dev libzip-dev libldap2-dev \
-libsasl2-dev python3-dev libjpeg-dev libpq-dev python3-virtualenv curl gnupg apt-transport-https
+# ===============================
+# 2. Instalar dependencias
+# ===============================
+sudo apt install python3-pip build-essential wget \
+libxslt-dev libzip-dev libldap2-dev libsasl2-dev python3-dev \
+libjpeg-dev libpq-dev git python3-virtualenv -y
 
-# Instalación de PostgreSQL
-echo "Instalando PostgreSQL..."
-sudo apt install -y postgresql
+# ===============================
+# 3. Instalar PostgreSQL y crear usuario
+# ===============================
+sudo apt install postgresql -y
 
-# Crear usuario de PostgreSQL
-echo "Creando usuario de PostgreSQL..."
-sudo -u postgres createuser --createdb --no-createrole --no-superuser --pwprompt $DB_USER <<EOF
-$DB_PASS
-$DB_PASS
+sudo -u postgres psql <<EOF
+CREATE USER $ODOO_DB_USER WITH PASSWORD '$ODOO_DB_PASS' CREATEDB;
 EOF
 
-# Crear usuario de sistema si no existe
-if ! id -u $ODOO_USER >/dev/null 2>&1; then
-    echo "Creando usuario de sistema $ODOO_USER..."
-    sudo adduser --gecos "" $ODOO_USER --disabled-password
-    echo "$ODOO_USER:$ODOO_PASS" | sudo chpasswd
-fi
+# ===============================
+# 4. Crear directorios y entorno virtual
+# ===============================
+mkdir -p $ODOO_HOME
+cd $ODOO_HOME || exit
 
-# Crear directorios
-echo "Creando directorios..."
-sudo -u $ODOO_USER mkdir -p $ODOO_HOME
+virtualenv -p python3 $ODOO_VENV
+source $ODOO_VENV/bin/activate
 
-# Crear entorno virtual
-echo "Configurando entorno virtual..."
-sudo -u $ODOO_USER virtualenv -p python3 $ODOO_HOME/$VENV_NAME
+# ===============================
+# 5. Descargar Odoo 18
+# ===============================
+git clone https://github.com/odoo/odoo.git --branch=18.0 --depth=1
 
-# Activar entorno virtual e instalar Odoo
-echo "Descargando Odoo 18..."
-sudo -u $ODOO_USER git clone https://github.com/odoo/odoo.git --branch=18.0 --depth=1 $ODOO_HOME/odoo
+# ===============================
+# 6. Instalar dependencias de Odoo
+# ===============================
+cd odoo || exit
+pip install --upgrade pip
+pip install -r requirements.txt
+python setup.py install
 
-echo "Instalando dependencias de Odoo..."
-sudo -u $ODOO_USER bash -c "source $ODOO_HOME/$VENV_NAME/bin/activate && \
-    pip install -r $ODOO_HOME/odoo/requirements.txt && \
-    pip install lxml_html_clean && \
-    python $ODOO_HOME/odoo/setup.py install"
-
-# Crear archivo de configuración
-echo "Creando archivo de configuración de Odoo..."
-sudo -u $ODOO_USER tee $ODOO_HOME/odoo18.conf > /dev/null <<EOF
+# ===============================
+# 7. Configurar archivo run.conf
+# ===============================
+cat > $ODOO_CONF <<EOL
 [options]
-addons_path = $ODOO_HOME/odoo/addons
+addons_path = $ODOO_ADDONS
 db_host = localhost
 db_port = 5432
-db_user = $DB_USER
-db_password = $DB_PASS
-admin_passwd = $ADMIN_PASS
+db_user = $ODOO_DB_USER
+db_password = $ODOO_DB_PASS
+admin_passwd = $ODOO_ADMIN_PASS
 http_port = $ODOO_PORT
-EOF
+xmlrpc_interface = 0.0.0.0
+netrpc_interface = 0.0.0.0
+EOL
 
-# Crear servicio systemd para Odoo
-echo "Creando servicio systemd de Odoo..."
-sudo tee /etc/systemd/system/odoo18.service > /dev/null <<EOF
+# ===============================
+# 8. Instalar paquete recomendado
+# ===============================
+pip install lxml_html_clean
+
+# ===============================
+# 9. Crear servicio systemd
+# ===============================
+SERVICE_FILE="/etc/systemd/system/odoo18.service"
+sudo tee $SERVICE_FILE > /dev/null <<EOL
 [Unit]
-Description=Odoo 18.0 service
-Documentation=http://www.odoo.com
-After=network.target
+Description=Odoo 18
+Requires=postgresql.service
+After=network.target postgresql.service
 
 [Service]
+Type=simple
 User=$ODOO_USER
 Group=$ODOO_USER
-WorkingDirectory=$ODOO_HOME
-ExecStart=$ODOO_HOME/$VENV_NAME/bin/python3 $ODOO_HOME/$VENV_NAME/bin/odoo -c $ODOO_HOME/odoo18.conf
-Restart=always
-StandardOutput=journal+console
-StandardError=journal+console
+ExecStart=$ODOO_VENV/bin/odoo -c $ODOO_CONF
+Restart=on-failure
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOL
 
-# Recargar y habilitar servicio
+# ===============================
+# 10. Activar y arrancar el servicio
+# ===============================
 sudo systemctl daemon-reload
-sudo systemctl enable --now odoo18
+sudo systemctl enable odoo18
+sudo systemctl start odoo18
 
-# Instalación de Wazuh Agent
-echo "Configurando Wazuh Agent..."
-curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
-sudo chmod 644 /usr/share/keyrings/wazuh.gpg
-echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | sudo tee /etc/apt/sources.list.d/wazuh.list
-sudo apt-get update
-sudo apt-get install -y wazuh-agent=$WAZUH_VERSION
-
-# Configuración de logs de Odoo para Wazuh
-sudo mkdir -p /var/log/odoo
-sudo touch /var/log/odoo/odoo.log
-sudo chown wazuh:wazuh /var/log/odoo/odoo.log
-sudo chmod 640 /var/log/odoo/odoo.log
-
-# Configuración del archivo ossec.conf
-sudo tee /var/ossec/etc/ossec.conf > /dev/null <<EOF
-<ossec_config>
-  <client>
-    <server>
-      <address>$WAZUH_SERVER</address>
-      <port>1514</port>
-      <protocol>tcp</protocol>
-    </server>
-  </client>
-  <localfile>
-    <log_format>syslog</log_format>
-    <location>/var/log/odoo/odoo.log</location>
-  </localfile>
-</ossec_config>
-EOF
-
-# Habilitar y arrancar servicio Wazuh
-sudo systemctl enable --now wazuh-agent
-
-echo "Instalación completada. Accede a Odoo en: http://<IP_DEL_SERVIDOR>:$ODOO_PORT"
+echo "Instalación completa. Odoo 18 debería estar corriendo en http://<IP-SERVIDOR>:$ODOO_PORT"
