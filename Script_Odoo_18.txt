@@ -6,7 +6,7 @@
 # ===============================
 # Variables de configuración
 # ===============================
-ODOO_USER="joel"
+ODOO_USER="joel"     #--> debe ser el nombre del usuario de la maquina linux
 ODOO_HOME="/home/$ODOO_USER/18"
 ODOO_VENV="$ODOO_HOME/virt_odoo18"
 ODOO_CONF="$ODOO_HOME/odoo18.conf"
